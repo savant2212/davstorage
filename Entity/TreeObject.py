@@ -1,7 +1,20 @@
 # To change this template, choose Tools | Templates
 # and open the template in the editor.
+from sqlalchemy import Table, Column, Integer, String, MetaData, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
 
-class TreeObject:
+Base = declarative_base()
+class TreeObject(Base):
+    __tablename__= 'TreeObjects'
+    id      = Column(Integer, primary_key=True)
+    name    = Column(String)
+    type    = Column(Integer)
+    parent  = Column(Integer)
+    owner   = Column(Integer)
+    group   = Column(Integer)
+    size    = Column(Integer)
+    content = Column(Integer)
+
     def __init__(self, name, type, parent, owner, group, size, content ):
          self.name      = name
          self.type      = type

@@ -48,6 +48,8 @@ class DAVAuthHandler(DAVRequestHandler):
 
     def get_userinfo(self,user,pw,command):
         """ authenticate user """
+        #we have no auth
+        return 1
 
         if user == self._config.DAV.user and pw == self._config.DAV.password:
             log.info('Successfully authenticated user %s' % user)

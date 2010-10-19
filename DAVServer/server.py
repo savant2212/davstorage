@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 #Copyright (c) 1999-2005 Christian Scholz (cs@comlounge.net)
 #
 #This library is free software; you can redistribute it and/or
@@ -45,6 +45,7 @@ __author__  = AUTHOR
 from fileauth import DAVAuthHandler
 from mysqlauth import MySQLAuthHandler
 from fshandler import FilesystemHandler
+from myhandler import DBFSHandler
 from daemonize import startstop
 from DAV.INI_Parse import Configuration
 
@@ -59,7 +60,6 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 def runserver(
          port = 8008, host='localhost',
-         directory='/tmp',
          verbose = False,
          noauth = False,
          user = '',
@@ -67,35 +67,22 @@ def runserver(
          handler = DAVAuthHandler,
          server = ThreadedHTTPServer):
 
-    directory = directory.strip()
-    directory = directory.rstrip('/')
     host = host.strip()
-
-    if not os.path.isdir(directory):
-        log.error('%s is not a valid directory!' % directory)
-        return sys.exit(233)
 
     # basic checks against wrong hosts
     if host.find('/') != -1 or host.find(':') != -1:
         log.error('Malformed host %s' % host)
         return sys.exit(233)
 
-    # no root directory
-    if directory == '/':
-        log.error('Root directory not allowed!')
-        sys.exit(233)
-
-    # dispatch directory and host to the filesystem handler
+      # dispatch directory and host to the filesystem handler
     # This handler is responsible from where to take the data
-    handler.IFACE_CLASS = FilesystemHandler(directory, 'http://%s:%s/' % (host, port), verbose )
+    handler.IFACE_CLASS = DBFSHandler('sqlite:///:memory:', 'http://%s:%s/' % (host, port), verbose )
 
     # put some extra vars
     handler.verbose = verbose
     if noauth:
         log.warning('Authentication disabled!')
         handler.DO_AUTH = False
-
-    log.info('Serving data from %s' % directory)
 
     if handler._config.DAV.getboolean('lockemulation') is False:
         log.info('Deactivated LOCK, UNLOCK (WebDAV level 2) support')
@@ -126,10 +113,6 @@ Parameters:
     -c, --config    Specify a file where configuration is specified. In this
                     file you can specify options for a running server.
                     For an example look at the config.ini in this directory.
-    -D, --directory Directory where to serve data from
-                    The user that runs this server must have permissions
-                    on that directory. NEVER run as root!
-                    Default directory is /tmp
     -H, --host      Host where to listen on (default: localhost)
     -P, --port      Port to bind server to  (default: 8008)
     -u, --user      Username for authentication
@@ -179,8 +162,7 @@ def setupDummyConfig(**kw):
     return DummyConfig()
 
 def run():
-    verbose = False
-    directory = '/tmp'
+    verbose = False   
     port = 8008
     host = 'localhost'
     noauth = False
@@ -198,8 +180,8 @@ def run():
     # parse commandline
     try:
         opts, args = getopt.getopt(sys.argv[1:], 'P:D:H:d:u:p:nvhmJi:c:Ml:',
-                ['host=', 'port=', 'directory=', 'user=', 'password=',
-                 'daemon=', 'noauth', 'help', 'verbose', 'mysql', 
+                ['host=', 'port=', 'user=', 'password=',
+                 'daemon=', 'noauth', 'help', 'verbose', 'mysql',
                  'icounter=', 'config=', 'lockemu', 'nomime', 'loglevel'])
     except getopt.GetoptError, e:
         print usage
@@ -221,9 +203,6 @@ def run():
 
         if o in ['-c', '--config']:
             configfile = a
-
-        if o in ['-D', '--directory']:
-            directory = a
 
         if o in ['-H', '--host']:
             host = a
@@ -268,7 +247,6 @@ def run():
         dv = conf.DAV
         verbose = bool(int(dv.verbose))
         loglevel = dv.get('loglevel', loglevel).lower()
-        directory = dv.directory
         port = dv.port
         host = dv.host
         noauth = bool(int(dv.noauth))
@@ -293,7 +271,6 @@ def run():
     else:
 
         _dc = { 'verbose' : verbose,
-                'directory' : directory,
                 'port' : port,
                 'host' : host,
                 'noauth' : noauth,
@@ -325,13 +302,6 @@ def run():
     else:
         log.info('Stopping PyWebDAV server (version %s)' % __version__)
 
-    if not noauth and daemonaction not in ['status', 'stop']:
-        if not user:
-            print usage
-            print >>sys.stderr, '>> ERROR: No usable parameter specified!'
-            print >>sys.stderr, '>> Example: davserver -D /home/files -n'
-            sys.exit(3)
-
     if daemonaction == 'status':
         log.info('Checking for state...')
 
@@ -341,20 +311,20 @@ def run():
     log.info('chunked_http_response feature %s' % (conf.DAV.getboolean('chunked_http_response') and 'ON' or 'OFF' ))
     log.info('http_request_use_iterator feature %s' % (conf.DAV.getboolean('http_request_use_iterator') and 'ON' or 'OFF' ))
     log.info('http_response_use_iterator feature %s' % (conf.DAV.getboolean('http_response_use_iterator') and 'ON' or 'OFF' ))
- 
-    if daemonize:
 
-        # check if pid file exists
-        if os.path.exists('/tmp/pydav%s.pid' % counter) and daemonaction not in ['status', 'stop']:
-            log.error(
-                  'Found another instance! Either use -i to specifiy another instance number or remove /tmp/pydav%s.pid!' % counter)
-            sys.exit(3)
-
-        startstop(stdout='/tmp/pydav%s.log' % counter, 
-                    stderr='/tmp/pydav%s.err' % counter, 
-                    pidfile='/tmp/pydav%s.pid' % counter, 
-                    startmsg='>> Started PyWebDAV (PID: %s)',
-                    action=daemonaction)
+#    if daemonize:
+#
+#        # check if pid file exists
+#        if os.path.exists('/tmp/pydav%s.pid' % counter) and daemonaction not in ['status', 'stop']:
+#            log.error(
+#                  'Found another instance! Either use -i to specifiy another instance number or remove /tmp/pydav%s.pid!' % counter)
+#            sys.exit(3)
+#
+#        startstop(stdout='/tmp/pydav%s.log' % counter,
+#                    stderr='/tmp/pydav%s.err' % counter,
+#                    pidfile='/tmp/pydav%s.pid' % counter,
+#                    startmsg='>> Started PyWebDAV (PID: %s)',
+#                    action=daemonaction)
 
     # start now
     handler = DAVAuthHandler
@@ -364,7 +334,7 @@ def run():
     # injecting options
     handler._config = conf
 
-    runserver(port, host, directory, verbose, noauth, user, password, 
+    runserver(port, host, verbose, noauth, user, password,
               handler=handler)
 
 if __name__ == '__main__':
