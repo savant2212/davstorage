@@ -15,23 +15,28 @@
 #Software Foundation, Inc., 59 Temple Place - Suite 330, Boston,
 #MA 02111-1307, USA
 
-from Entity.Content import Content
-from Entity.TreeObject import TreeObject
+from DAV.errors import DAV_Error
+from DAV.errors import DAV_NotFound
+from logging import debug
 import sys
 import urlparse
-import os
+import os, string
 import time
 from string import joinfields, split, lower
 import logging
 import types
 import shutil
+import time
+import base64
 
 from DAV.constants import COLLECTION, OBJECT
 from DAV.errors import *
 from DAV.iface import *
 
 from DAV.davcmd import copyone, copytree, moveone, movetree, delone, deltree
-from sqlalchemy import Table, Column, Integer, String, MetaData, ForeignKey
+
+from sqlalchemy import create_engine
+from sqlalchemy import Table, Column, Integer, String, MetaData, ForeignKey, DateTime, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import mapper, sessionmaker
 
@@ -70,7 +75,59 @@ class Resource(object):
 
         data = self.__fp.read(length)
         return data
-        
+
+Base = declarative_base()
+
+class Content(Base):
+    __tablename__= 'Contents'
+
+    id       = Column(Integer, primary_key=True)
+    object_id = Column(Integer)
+    revision = Column(Integer)
+    content  = Column(String)
+    mod_time = Column(Float)
+
+
+    def __init__(self, revision, content, tree_object, mod_time=time.time()):
+        self.revision   = revision
+        self.content    = content
+        self.object_id  = tree_object
+        mod_time        = mod_time
+
+    def __repr__(self):
+        return "<Content('%s','%s', '%s')>" % (self.tree_object, self.content, self.revision)
+
+
+class TreeObject(Base):
+    __tablename__= 'TreeObjects'
+    id      = Column(Integer, primary_key=True)
+    name    = Column(String)
+    type    = Column(Integer)
+    parent  = Column(Integer)
+    owner   = Column(Integer)
+    group   = Column(Integer)
+    size    = Column(Integer)    
+    path    = Column(String)
+    mod_time = Column(Float)
+    creat_time = Column(Float)
+
+    def __init__(self, name, type, parent, owner, group, size, content, path,
+        creat_time=time.time(), mod_time=time.time()):
+         self.name      = name
+         self.type      = type
+         self.parent    = parent
+         self.owner     = owner
+         self.group     = group
+         self.size      = size
+         self.content   = content
+         self.path      = path
+         self.mod_time  = mod_time
+         self.creat_time= creat_time
+
+    def __repr__(self):
+             return "<TreeObject('%s','%s','%s','%s','%s','%s','%s', '%s')>" % (
+         self.name, self.type, self.parent, self.owner, self.group, self.size,
+         self.content, self.path)
 
 class DBFSHandler(dav_interface):
     """ 
@@ -94,90 +151,167 @@ class DBFSHandler(dav_interface):
         self.verbose = verbose
         log.info('Initialized with %s' % (uri))
 
+    def setup(self):
+        """Documentation"""
+        sess = self.Session()
+        root_element = sess.query(TreeObject).filter_by(id='1').first()
+
+        if root_element == None :
+            root_element=TreeObject("/",1,None,0,0,0,0,'/')
+            sess.add(root_element)
+            sess.commit()
+            sess.close()
+
     def setEngine(self, connection_string):
         """ Set sqlalchemy engine"""
+        
         self.metadata = Base.metadata
         self.engine = create_engine(connection_string, echo=True)
-        
-        self.session = sessionmaker(bind=self.engine)
-        root_element = session.query(TreeOblect).filter_by(id='1').first()
 
-        if root_element == null :
-            root_element=TreeObject("/",1,null,0,0,0,0)
-            self.session.add(root_element)
+        print(self.metadata)
+
+        self.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
+        
+        
 
     def setBaseURI(self, uri):
         """ Sets the base uri """
 
         self.baseuri = uri
-
-    def uri2id(self,uri):
-        """ map uri in baseuri and local part """
-        raise NotImplementedError
-        uparts=urlparse.urlparse(uri)
-        fileloc=uparts[2][1:]
-
-        #get object id
-
-        return id
-
-    def object2uri(self,filename):
-        """ map local filename to self.baseuri """
-        raise NotImplementedError
         
-        uri=urlparse.urljoin(self.baseuri,sparts)
+    # @type obj TreeObject
+    def uri2obj(self,uri):
+        """ map uri in baseuri and local part """
+        sess = self.Session()
+
+        uparts=urlparse.urlparse(uri)
+        fileloc=uparts[2]
+        print('fileloc: %s' % (fileloc) )
+        #get object id
+        element=None
+        if fileloc != '':
+            element = sess.query(TreeObject).filter_by(path=fileloc).first()
+        else :
+            element = sess.query(TreeObject).filter_by(id='1').first()
+
+        sess.close()
+
+        if element == None:
+            return None
+
+        return element
+
+    def object2uri(self,obj):
+        """ map local filename to self.baseuri """
+        uri=urlparse.urljoin(self.baseuri,obj.path)
         return uri
 
 
     def get_childs(self,uri):
         """ return the child objects as self.baseuris for the given URI """
-        raise NotImplementedError
-        
+        # @type obj TreeObject
+        obj=self.uri2obj(uri)
+        sess = self.Session()
+        filelist = []
+        # @type elt TreeObject
+        for elt in sess.query(TreeObject).filter_by(parent=obj.id).order_by(TreeObject.name):
+            print(elt.name)
+            filelist.append(self.object2uri(elt))
+
+        return filelist
+
     def get_data(self,uri, range = None):
         """ return the content of an object """
-        raise NotImplementedError
+        obj=self.uri2obj(uri)
+        #if obj.type == 0:
+
+        raise DAV_Error
 
     def _get_dav_resourcetype(self,uri):
-        """ return type of object """
-        raise NotImplementedError
-        path=self.uri2local(uri)
-        if os.path.isfile(path):
+        """ return type of object """        
+        obj=self.uri2obj(uri)
+        if obj.type == 0:
             return OBJECT
-
-        elif os.path.isdir(path):
+        elif  obj.type == 1:
             return COLLECTION
 
         raise DAV_NotFound
 
     def _get_dav_displayname(self,uri):
-        raise NotImplementedError
+
+        obj = self.uri2obj(uri)
+        # @type obj TreeObject
+        return obj.name
 
     def _get_dav_getcontentlength(self,uri):
         """ return the content length of an object """
-        raise NotImplementedError
+        return '0'
 
     def get_lastmodified(self,uri):
         """ return the last modified date of the object """
-        raise NotImplementedError
+        # @type obj TreeObject
+        obj = self.uri2obj(uri)
+
+        return obj.mod_time
         
 
     def get_creationdate(self,uri):
-        """ return the last modified date of the object """
-        raise NotImplementedError
+        """ return the creation time of the object """
+        # @type obj TreeObject
+        obj = self.uri2obj(uri)
+
+        return obj.creat_time
 
     def _get_dav_getcontenttype(self,uri):
         """ find out yourself! """
-
-        raise NotImplementedError
+        return 'application/octet-stream'
 
     def put(self, uri, data, content_type=None):
         """ put the object into the filesystem """
-        raise NotImplementedError
+        sess = self.Session()
+        path = urlparse.urlparse(uri)[2]
+        path_array = path.split('/')
+        name = path_array[-1]
+        parent_path = string.join(path_array[:-1])
+        if parent_path == '':
+            parent_path='/'
+        parent = sess.query(TreeObject).filter_by(path=parent_path).first()
+
+        if parent == None :
+            raise DAV_Error
+
+        obj = TreeObject(name,0,parent.id,0,0,0,0,path)
         
+        sess.add(obj)
+        sess.commit()
+
+        content = Content(1,base64.b64encode(data), obj.id)
+        sess.add(content)
+        sess.commit()
+        sess.close()
 
     def mkcol(self,uri):
         """ create a new collection """
-        raise NotImplementedError
+        path = urlparse.urlparse(uri)[2]
+        print (path)
+        sess = self.Session()
+        path_array = path.split('/')
+        name = path_array[-2]
+        parent_path = string.join(path_array[:-2])
+        if parent_path == '':
+            parent_path='/'
+        parent = sess.query(TreeObject).filter_by(path=parent_path).first()
+
+        if parent == None :
+            sess.close()
+            raise DAV_Error
+
+        obj = TreeObject(name,1,parent.id,0,0,0,0,path)
+
+        sess.add(obj)
+        sess.commit()
+        
 
     ### ?? should we do the handler stuff for DELETE, too ?
     ### (see below)
@@ -275,8 +409,9 @@ class DBFSHandler(dav_interface):
 
     def exists(self,uri):
         """ test if a resource exists """
-        raise NotImplementedError
+        return self.uri2obj(uri) != None
 
     def is_collection(self,uri):
         """ test if the given uri is a collection """
-        raise NotImplementedError
+
+        return _get_dav_resourcetype(self,uri) == COLLECTION

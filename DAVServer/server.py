@@ -23,6 +23,7 @@ This is an example implementation of a DAVserver using the DAV package.
 
 """
 
+from os import environ
 import getopt, sys, os
 import logging
 
@@ -76,8 +77,8 @@ def runserver(
 
       # dispatch directory and host to the filesystem handler
     # This handler is responsible from where to take the data
-    handler.IFACE_CLASS = DBFSHandler('sqlite:///:memory:', 'http://%s:%s/' % (host, port), verbose )
-
+    handler.IFACE_CLASS = DBFSHandler('sqlite:///%s/../db/devel.db' % (os.getcwd()), 'http://%s:%s/' % (host, port), verbose )
+    handler.IFACE_CLASS.setup()
     # put some extra vars
     handler.verbose = verbose
     if noauth:
